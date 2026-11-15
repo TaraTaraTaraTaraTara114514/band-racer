@@ -1,0 +1,46 @@
+name: Build watchface
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Get Mi Create (for its compiler)
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/ooflet/Mi-Create.git micreate
+
+      - name: Compile watchface
+        shell: pwsh
+        working-directory: micreate/src
+        run: |
+          $proj = (Resolve-Path "$env:GITHUB_WORKSPACE\face\SportFace.fprj").Path
+          $out = "$env:GITHUB_WORKSPACE\output"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $log = & .\compiler\compile.exe -b $proj $out SportFace.face 1461256429 2>&1 | Out-String
+          Write-Host $log
+          if ($log -match "Error:") { throw "compile.exe reported an error, see log above" }
+          if (-not (Test-Path "$out\SportFace.face")) { throw "SportFace.face was not produced" }
+
+      - name: Write watchface ID and export .bin
+        shell: python
+        run: |
+          import os, shutil
+          p = os.path.join(os.environ["GITHUB_WORKSPACE"], "output", "SportFace.face")
+          data = bytearray(open(p, "rb").read())
+          print("size:", len(data), "header:", data[:4].hex(" "))
+          data[40:49] = b"812024001"   # same thing Mi Create does after compiling
+          open(p, "wb").write(data)
+          shutil.copy(p, os.path.join(os.path.dirname(p), "SportFace.bin"))
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: SportFace-watchface
+          path: output/*
